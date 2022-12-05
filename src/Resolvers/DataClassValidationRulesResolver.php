@@ -17,26 +17,27 @@ class DataClassValidationRulesResolver
     ) {
     }
 
-    public function execute(string $class, array $payload = [], bool $nullable = false): Collection
+    public function execute(string $class, array $payload = [], bool $nullable = false, ?string $dataPath = null): Collection
     {
         $resolver = app(DataPropertyValidationRulesResolver::class);
 
-        $overWrittenRules = $this->resolveOverwrittenRules($class, $payload);
+        $overWrittenRules = $this->resolveOverwrittenRules($class, $payload, $dataPath);
 
         return $this->dataConfig->getDataClass($class)
             ->properties
             ->reject(fn (DataProperty $property) => ! $property->validate)
-            ->mapWithKeys(fn (DataProperty $property) => $resolver->execute($property, $payload, $nullable)->all())
+            ->mapWithKeys(fn (DataProperty $property) => $resolver->execute($property, $payload, $nullable, $dataPath)->all())
             ->merge($overWrittenRules);
     }
 
-    private function resolveOverwrittenRules(string $class, array $payload = []): array
+    private function resolveOverwrittenRules(string $class, array $payload = [], ?string $dataPath = null): array
     {
         $overWrittenRules = [];
 
         if (method_exists($class, 'rules')) {
             $overWrittenRules = app()->call([$class, 'rules'], [
                 'payload' => $payload,
+                'path' => $dataPath,
             ]);
         }
 

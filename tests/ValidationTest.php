@@ -381,27 +381,24 @@ it('will use name mapping with nested objects', function () {
 });
 
 it('can use nested payloads in nested data', function () {
-    // Also implement for collections -> complicated we would have to create rules for each individual payload
-
     eval(<<<'PHP'
             use Spatie\LaravelData\Attributes\Validation\In;use Spatie\LaravelData\Data;
             class NestedClassF extends Data {
                 public bool $strict;
 
-                public string $string;
+                public string $name;
 
-                public static function rules(array $payload) : array{
-                    // Maybe introduce parameter as $nestedPayload?
-
-                    if($payload['strict']){
+                public static function rules(array $payload, string $path): array{
+                    if(Arr::get($payload, "{$path}.strict")) {
                         return ['name' => ['in:strict']];
                     }
+                    return [];
                 }
             }
         PHP);
 
     $dataClass = new class () extends Data {
-        public \NestedClassF $nested;
+        public \NestedClassF $some_nested;
     };
 
     DataValidationAsserter::for($dataClass)
@@ -409,23 +406,130 @@ it('can use nested payloads in nested data', function () {
             rules: [
                 'some_nested' => ['required', 'array'],
                 'some_nested.strict' => ['boolean'],
-                'some_nested.string' => ['in:strict'],
+                'some_nested.name' => ['in:strict'],
             ],
             payload: [
-                'some_nested.strict' => true,
+                'some_nested' => [
+                    'strict' => true,
+                ],
             ]
         )
         ->assertRules(
             rules: [
                 'some_nested' => ['required', 'array'],
                 'some_nested.strict' => ['boolean'],
-                'some_nested.string' => ['required', 'string'],
+                'some_nested.name' => ['required', 'string'],
             ],
             payload: [
-                'some_nested.strict' => false,
+                'some_nested' => [
+                    'strict' => false,
+                ],
             ]
         );
-})->skip('Implementation required');
+});
+
+it('can use nested payloads in nested collection data', function () {
+    // A modified version of data_get with path support so that we get all known data and its matching path
+    // for a key like collection_a.*.collection_b.*.example
+    eval(<<<'PHP'
+        function data_get_with_path($target, $key, $default = null, $path = null): array
+        {
+            $result = [];
+
+            if (is_null($key)) {
+                return $result;
+            }
+
+            $key = is_array($key) ? $key : explode('.', $key);
+            $fullPath = $path;
+
+            foreach ($key as $i => $segment) {
+                unset($key[$i]);
+
+                if (is_null($segment)) {
+                    return $result;
+                }
+
+                if ($segment === '*') {
+                    if ($target instanceof Collection) {
+                        $target = $target->all();
+                    } elseif (! is_iterable($target)) {
+                        return value($default);
+                    }
+
+                    foreach ($target as $iteration => $item) {
+                        $result = [
+                            ...$result,
+                            ...data_get_with_path($item, $key, null, $fullPath ? "{$fullPath}.{$iteration}" : $iteration),
+                        ];
+                    }
+
+                    return $result;
+                }
+
+                $fullPath = $fullPath
+                    ? "{$fullPath}.{$segment}"
+                    : "{$segment}";
+
+                if (Arr::accessible($target) && Arr::exists($target, $segment)) {
+                    $target = $target[$segment];
+                } elseif (is_object($target) && isset($target->{$segment})) {
+                    $target = $target->{$segment};
+                } else {
+                    $result[$fullPath] = value($default);
+                    return $result;
+                }
+            }
+
+            $result[$fullPath] = $target;
+            return $result;
+        }
+    PHP);
+
+    eval(<<<'PHP'
+        use Spatie\LaravelData\Attributes\Validation\In;use Spatie\LaravelData\Data;
+        class NestedClassH extends Data {
+            public bool $strict;
+
+            public string $name;
+
+            public static function rules(array $payload, string $path): array
+            {
+                $rules = [];
+                foreach (data_get_with_path($payload, $path) as $dataObjectPath => $dataObjectData) {
+                    if ($dataObjectData['strict'] ?? false) {
+                        // Using ^ to signify an absolute rule path instead of relative
+                        $rules["^{$dataObjectPath}.name"] = ['in:strict'];
+                    }
+                }
+                return $rules;
+            }
+        }
+    PHP);
+
+    $dataClass = new class () extends Data {
+        #[DataCollectionOf(\NestedClassH::class)]
+        public DataCollection $some_nested;
+    };
+
+    DataValidationAsserter::for($dataClass)
+        ->assertRules(
+            rules: [
+                'some_nested' => ['present', 'array'],
+                'some_nested.*.strict' => ['boolean'],
+                'some_nested.*.name' => ['required', 'string'],
+                'some_nested.0.name' => ['in:strict'],
+                'some_nested.2.name' => ['in:strict'],
+            ],
+            payload: [
+                'some_nested' => [
+                    ['strict' => true],
+                    ['strict' => false],
+                    ['strict' => true],
+                ],
+            ]
+        );
+});
 
 test('rules in nested data are rewritten according to their fields', function () {
     // Should we do the same with the `rules` method?

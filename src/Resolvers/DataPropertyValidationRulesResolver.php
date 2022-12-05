@@ -3,6 +3,7 @@
 namespace Spatie\LaravelData\Resolvers;
 
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Spatie\LaravelData\Attributes\Validation\ArrayType;
 use Spatie\LaravelData\Attributes\Validation\Nullable;
 use Spatie\LaravelData\Attributes\Validation\Present;
@@ -21,12 +22,12 @@ class DataPropertyValidationRulesResolver
     ) {
     }
 
-    public function execute(DataProperty $property, array $payload = [], bool $nullable = false): Collection
+    public function execute(DataProperty $property, array $payload = [], bool $nullable = false, ?string $dataPath = null): Collection
     {
         $propertyName = $property->inputMappedName ?? $property->name;
 
         if ($property->type->isDataObject || $property->type->isDataCollectable) {
-            return $this->getNestedRules($property, $propertyName, $payload, $nullable);
+            return $this->getNestedRules($property, $propertyName, $payload, $nullable, $dataPath);
         }
 
         return collect([$propertyName => $this->getRulesForProperty($property, $nullable)]);
@@ -36,11 +37,12 @@ class DataPropertyValidationRulesResolver
         DataProperty $property,
         string $propertyName,
         array $payload,
-        bool $nullable
+        bool $nullable,
+        ?string $dataPath,
     ): Collection {
         $prefix = match (true) {
-            $property->type->isDataObject => "{$propertyName}.",
-            $property->type->isDataCollectable => "{$propertyName}.*.",
+            $property->type->isDataObject => $propertyName,
+            $property->type->isDataCollectable => "{$propertyName}.*",
             default => throw new TypeError()
         };
 
@@ -75,11 +77,20 @@ class DataPropertyValidationRulesResolver
             ->execute(
                 $property->type->dataClass,
                 $payload,
-                $this->isNestedDataNullable($nullable, $property)
+                $this->isNestedDataNullable($nullable, $property),
+                $dataPath ? "{$dataPath}.{$prefix}" : $prefix,
             )
-            ->mapWithKeys(fn (array $rules, string $name) => [
-                "{$prefix}{$name}" => $rules,
-            ])
+            ->mapWithKeys(function (array $rules, string $name) use ($prefix) {
+                // Handle root rules
+                if ($name[0] === '^') {
+                    return [
+                        substr($name, 1) => $rules,
+                    ];
+                }
+                return [
+                    "{$prefix}.{$name}" => $rules,
+                ];
+            })
             ->prepend($toplevelRules->normalize(), $propertyName);
     }
 
