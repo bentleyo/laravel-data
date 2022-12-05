@@ -81,14 +81,13 @@ class DataPropertyValidationRulesResolver
                 $dataPath ? "{$dataPath}.{$prefix}" : $prefix,
             )
             ->mapWithKeys(function (array $rules, string $name) use ($prefix) {
-                // Handle root rules
-                if ($name[0] === '^') {
-                    return [
-                        substr($name, 1) => $rules,
-                    ];
-                }
+                // Add prefix to the path if it isn't absolute
+                $key = $name[0] === '^'
+                    ? substr($name, 1)
+                    : "{$prefix}.{$name}";
+
                 return [
-                    "{$prefix}.{$name}" => $rules,
+                    $key => $rules,
                 ];
             })
             ->prepend($toplevelRules->normalize(), $propertyName);
